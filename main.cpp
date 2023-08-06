@@ -3,7 +3,6 @@
 #include <unistd.h>
 #include "Curl.hpp"
 using namespace std;
-extern string CurrentDir;
 string Decode(string Input, int OBFSKEY)
 {
     for (unsigned int i = 0; i < Input.size(); i++)
@@ -15,30 +14,26 @@ string Decode(string Input, int OBFSKEY)
     }
     return Input;
 }
-
-// Copied from Projects/OJTool/main.cpp TOOL::LUOGU::GetCSRF
+// Copied from OJTool/Luogu.cpp TOOL::LUOGU::GetCSRF
 string GetCSRF()
 {
     // Get csrf token
     string Token = GetStringBetween(GetDataFromFileToString(),
                                     "<meta name=\"csrf-token\" content=\"", "\"");
     if (Token == "")
-    {
         TRIGGER_ERROR("Can not find csrf token");
-    }
     return Token;
 }
 
-// Copied from Projects/OJTool/main.cpp TOOL::LUOGU::Login
+// Copied from OJTool/Luogu.cpp LUOGU::Login
 void LoginLuogu(string Username, string Password)
 {
-
     // Check if the user is logged in.
     int HTTPResponseCode = 0;
     cout << "Checking login... " << flush;
     GetDataToFile("https://www.luogu.com.cn/auth/login",
-                  "Header.tmp",
-                  "Body.tmp",
+                  "",
+                  "",
                   false,
                   "",
                   NULL,
@@ -57,36 +52,45 @@ void LoginLuogu(string Username, string Password)
         // Get login captcha
         cout << "Getting login captcha... " << flush;
         GetDataToFile("https://www.luogu.com.cn/api/verify/captcha",
-                      "Header.tmp",
-                      "Captcha.jpeg");
+                      "",
+                      "/tmp/Captcha.jpeg");
         cout << "Succeed" << endl;
 
         // Predict captcha
         curl_slist *HeaderList = NULL;
         HeaderList = curl_slist_append(HeaderList, "Content-Type: application/json");
-        cout << "Predicting captcha... " << flush;
+        cout << "Predicting captcha by web api... " << flush;
         string Captcha = "";
         try
         {
             GetDataToFile("https://luogu-captcha-bypass.piterator.com/predict/",
-                          "Header.tmp",
-                          "Body.tmp",
+                          "",
+                          "",
                           true,
                           "data:image/jpeg;base64," +
                               Base64Encode(
-                                  GetDataFromFileToString("Captcha.jpeg")),
+                                  GetDataFromFileToString("/tmp/Captcha.jpeg")),
                           HeaderList);
             cout << "Succeed" << endl;
             Captcha = GetDataFromFileToString();
         }
-        catch (CLNException Exception)
+        catch (CLNException &Exception)
         {
-            cout << "Failed" << endl;
-            system(("code " + CurrentDir + "Captcha.jpeg").c_str());
-            cout << "Please input the captcha: ";
-            cin >> Captcha;
+            cout << "Failed" << endl
+                 << "Predicting captcha by AI model... " << flush;
+            if (system("python ~/OJTool/PredictLuoguCaptcha.py > /dev/null 2>&1") == 0)
+            {
+                cout << "Succeed" << endl;
+                Captcha = FixString(GetDataFromFileToString("/tmp/Captcha.txt"));
+            }
+            else
+            {
+                cout << "Failed" << endl;
+                system("code-insiders /tmp/Captcha.jpeg");
+                cout << "Please input the captcha: ";
+                cin >> Captcha;
+            }
         }
-        remove((CurrentDir + "Captcha.jpeg").c_str());
 
         // Create a json object to store the login request info
         json LoginRequest;
@@ -108,8 +112,8 @@ void LoginLuogu(string Username, string Password)
         // Send the login request to the server
         cout << "Logging in... " << flush;
         GetDataToFile("https://www.luogu.com.cn/api/auth/userPassLogin",
-                      "Header.tmp",
-                      "Body.tmp",
+                      "",
+                      "",
                       true,
                       LoginRequest.dump(),
                       HeaderList);
@@ -176,11 +180,11 @@ void DownloadVideo(string CourseID)
             true);
         string M3U8Detail = GetDataFromFileToString();
         unsigned int TSCounter = 0;
-        if (system(string("mkdir \"" + CurrentDir + CourseInfo["currentData"]["lesson"]["name"].as_string() + "\"").c_str()) != 0)
+        if (system(string("mkdir \"" + CourseInfo["currentData"]["lesson"]["name"].as_string() + "\"").c_str()) != 0)
         {
             TRIGGER_ERROR("Create dir failed");
         }
-        ofstream OutputFileStream(string(CurrentDir + CourseInfo["currentData"]["lesson"]["name"].as_string() + "/index.m3u8"));
+        ofstream OutputFileStream(string(CourseInfo["currentData"]["lesson"]["name"].as_string() + "/index.m3u8"));
         if (OutputFileStream.bad())
         {
             TRIGGER_ERROR("Open output file failed");
@@ -230,36 +234,57 @@ void DownloadVideo(string CourseID)
         }
         OutputFileStream.close();
         if (system((string("ffmpeg -y -hide_banner -loglevel error -protocol_whitelist concat,file,http,https,tcp,tls,crypto -i ") +
-                    "\"" + CurrentDir + CourseInfo["currentData"]["lesson"]["name"].as_string() + "/index.m3u8\" " +
-                    "\"" + CurrentDir + CourseInfo["currentData"]["lesson"]["name"].as_string() + "/index.mp4\"")
+                    "\"" + CourseInfo["currentData"]["lesson"]["name"].as_string() + "/index.m3u8\" " +
+                    "\"" + CourseInfo["currentData"]["lesson"]["name"].as_string() + "/index.mp4\"")
                        .c_str()) == 0 &&
             system((string("cp ") +
-                    "\"" + CurrentDir + CourseInfo["currentData"]["lesson"]["name"].as_string() + "/index.mp4\" " +
-                    "\"" + CurrentDir + CourseInfo["currentData"]["lesson"]["name"].as_string() +
+                    "\"" + CourseInfo["currentData"]["lesson"]["name"].as_string() + "/index.mp4\" " +
+                    "\"" + CourseInfo["currentData"]["lesson"]["name"].as_string() +
                     (CourseInfo["currentData"]["replayFiles"].size() == 1
                          ? ""
                          : "_" + to_string(M3U8Counter)) +
                     ".mp4\"")
                        .c_str()) == 0)
-            system(string("rm -r \"" + CurrentDir + CourseInfo["currentData"]["lesson"]["name"].as_string() + "\"").c_str());
+            system(string("rm -r \"" + CourseInfo["currentData"]["lesson"]["name"].as_string() + "\"").c_str());
         M3U8Counter++;
     }
 }
-int main()
+int main(int argc, char **argv)
 {
     CLN_TRY
-    cout << "Please input the course id(LGR and lgr is different): ";
-    string CourseID;
-#ifdef TEST
-    CourseID = "LGR119";
-    cout << CourseID << endl;
-#else
-    cin >> CourseID;
-#endif
-    Login(GetDataFromFileToString("Keys/LuoguUsername"), GetDataFromFileToString("Keys/LuoguPassword"));
+    string Username = "";
+    string Password = "";
+    string CourseID = "";
+    for (int i = 1; i < argc; i++)
+    {
+        string Argument = argv[i];
+        string NextArgument = i + 1 == argc ? "" : argv[i + 1];
+        if (Argument == "-u" || Argument == "--username")
+        {
+            Username = NextArgument;
+            i++;
+        }
+        else if (Argument == "-p" || Argument == "--password")
+        {
+            Password = NextArgument;
+            i++;
+        }
+        else if (Argument == "-c" || Argument == "--course")
+        {
+            CourseID = NextArgument;
+            i++;
+        }
+        else
+            TRIGGER_ERROR("Unknown option \"" + Argument + "\"");
+    }
+    if (Username == "")
+        TRIGGER_ERROR("No username provided");
+    if (Password == "")
+        TRIGGER_ERROR("No password provided");
+    if (CourseID == "")
+        TRIGGER_ERROR("No course provided");
+
+    Login(Username, Password);
     DownloadVideo(CourseID);
-#ifdef TEST
-    OutputSummary("Success");
-#endif
     CLN_CATCH return 0;
 }
