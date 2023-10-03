@@ -78,7 +78,7 @@ void LoginLuogu(string Username, string Password)
         {
             cout << "Failed" << endl
                  << "Predicting captcha by AI model... " << flush;
-            if (system("python ~/OJTool/PredictLuoguCaptcha.py > /dev/null 2>&1") == 0)
+            if (system("python OJTool/PredictLuoguCaptcha.py > /dev/null 2>&1") == 0)
             {
                 cout << "Succeed" << endl;
                 Captcha = FixString(GetDataFromFileToString("/tmp/Captcha.txt"));
